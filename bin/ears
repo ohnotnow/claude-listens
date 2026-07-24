@@ -5,7 +5,15 @@ port="${EARS_PORT:-18790}"
 cmd="${1:-status}"
 case "$cmd" in
   status) exec curl -sf "localhost:$port/status" ;;
-  toggle | arm | cancel) exec curl -sf -X POST "localhost:$port/$cmd" ;;
+  arm)
+    # Exit 0 only if this call actually got the mic (daemon says "armed") -
+    # the hands-free hook relies on this to avoid claiming someone else's
+    # in-flight recording.
+    out=$(curl -sf -X POST "localhost:$port/arm") || exit 1
+    printf '%s\n' "$out"
+    case "$out" in *'"armed"'*) exit 0 ;; *) exit 3 ;; esac
+    ;;
+  toggle | cancel) exec curl -sf -X POST "localhost:$port/$cmd" ;;
   *)
     echo "usage: ears [status|toggle|arm|cancel]" >&2
     exit 2

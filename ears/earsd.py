@@ -198,10 +198,14 @@ class Ears:
             return self.state
 
     def arm(self) -> str:
+        """Idempotent arm: starts only when idle. Returns "armed" exactly when
+        this call started the recording, so callers (the hands-free hook) can
+        tell "I got the mic" from "someone else has it" — a second session's
+        arm must never stop an in-flight recording or claim its transcript."""
         with self.lock:
             if self.state == "idle":
                 self._start_locked()
-                return "recording"
+                return "armed"
             return self.state
 
     def cancel(self) -> str:

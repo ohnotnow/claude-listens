@@ -1,0 +1,54 @@
+#!/bin/sh
+# handy-reply - Handy "External Script" hook. Receives the finished transcript
+# as $1, consumes the one-shot reply target, cleans the text, and POSTs it to
+# the owning session's voice channel server. See ait handy-UkLWZ.2.3.
+#
+# Manual test (three commands, second in another terminal):
+#   printf '{"port": 18999, "session_id": "test"}\n' > ~/.claude-voice/reply-target.json
+#   bun -e 'Bun.serve({port:18999,hostname:"127.0.0.1",fetch:async r=>{console.log("GOT:",await r.text());return new Response("ok")}})'
+#   ./bin/handy-reply "test one two send send"   # server prints: GOT: test one two
+#   ./bin/handy-reply "should be dropped"        # no target left -> logged drop
+
+BASE="$HOME/.claude-voice"
+LOG="$BASE/handy-reply.log"
+TARGET="$BASE/reply-target.json"
+
+mkdir -p "$BASE" && chmod 700 "$BASE"
+
+log() {
+  printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >>"$LOG"
+}
+
+if [ ! -f "$TARGET" ]; then
+  log "no target, dropping: $(printf '%.60s' "$1")"
+  exit 0
+fi
+
+# Whitespace-tolerant port extraction (producer is json.dumps: '"port": 49321')
+PORT=$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' "$TARGET" | grep -oE '[0-9]+$' | head -1)
+rm -f "$TARGET" # one-shot: consumed regardless of outcome
+
+if [ -z "$PORT" ]; then
+  log "target had no port, dropping"
+  exit 0
+fi
+
+# Clean: trim -> strip one trailing spoken "send send" end-marker -> re-trim.
+TEXT=$(printf '%s' "$1" | sed -E \
+  -e 's/^[[:space:]]+//' \
+  -e 's/[[:space:]]+$//' \
+  -e 's/[[:space:],]*[Ss][Ee][Nn][Dd][ -]?[Ss][Ee][Nn][Dd][[:space:]]*[.!?,]*$//' \
+  -e 's/[[:space:]]+$//')
+
+if [ -z "$TEXT" ]; then
+  log "empty after cleaning, dropping"
+  exit 0
+fi
+
+# --data-raw: a transcript starting with "@" must never be read as a filename.
+if curl -s --max-time 5 --data-raw "$TEXT" "http://127.0.0.1:$PORT/say" >/dev/null; then
+  log "sent to :$PORT: $(printf '%.60s' "$TEXT")"
+else
+  log "curl failed for :$PORT"
+fi
+exit 0

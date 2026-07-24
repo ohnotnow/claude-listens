@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Control CLI for the ears daemon (ears/earsd.py). Raycast-ready, like bin/handsfree.
+set -euo pipefail
+port="${EARS_PORT:-18790}"
+cmd="${1:-status}"
+case "$cmd" in
+  status) exec curl -sf "localhost:$port/status" ;;
+  toggle | arm | cancel) exec curl -sf -X POST "localhost:$port/$cmd" ;;
+  *)
+    echo "usage: ears [status|toggle|arm|cancel]" >&2
+    exit 2
+    ;;
+esac

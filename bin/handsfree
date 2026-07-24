@@ -1,0 +1,57 @@
+#!/bin/sh
+
+# Required parameters:
+# @raycast.schemaVersion 1
+# @raycast.title Toggle Hands-Free
+# @raycast.mode silent
+
+# Optional parameters:
+# @raycast.icon 🎙️
+# @raycast.packageName Claude Listens
+# @raycast.description Toggle Claude hands-free voice mode (claude-speaks arms the mic after replies).
+
+# Documentation:
+# @raycast.author claude-listens
+# @raycast.authorURL https://github.com/ohnotnow/claude-listens
+
+# handsfree [on|off|toggle|status] - flag file gating the voice loop.
+# No argument means toggle (so the Raycast hotkey flips it).
+# status exits 0 when on, 1 when off, for scripting. See ait handy-UkLWZ.2.4.
+
+BASE="$HOME/.claude-voice"
+FLAG="$BASE/handsfree"
+
+mkdir -p "$BASE" && chmod 700 "$BASE"
+
+case "${1:-toggle}" in
+on)
+  touch "$FLAG"
+  echo "hands-free: on"
+  ;;
+off)
+  rm -f "$FLAG"
+  echo "hands-free: off"
+  ;;
+toggle)
+  if [ -f "$FLAG" ]; then
+    rm -f "$FLAG"
+    echo "hands-free: off"
+  else
+    touch "$FLAG"
+    echo "hands-free: on"
+  fi
+  ;;
+status)
+  if [ -f "$FLAG" ]; then
+    echo "hands-free: on"
+    exit 0
+  else
+    echo "hands-free: off"
+    exit 1
+  fi
+  ;;
+*)
+  echo "usage: handsfree [on|off|toggle|status]" >&2
+  exit 2
+  ;;
+esac

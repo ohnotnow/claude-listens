@@ -1,0 +1,12 @@
+{
+  "microphones": ["AirPods", "UGREEN"],
+  "control_port": 18790,
+  "silence_auto_stop_ms": 2500,
+  "no_speech_cancel_ms": 15000,
+  "max_recording_s": 90,
+  "vad_threshold": 0.5,
+  "reply_command": "/absolute/path/to/claude-listens/bin/handy-reply",
+  "sounds": { "start": "Tink", "stop": "Pop", "cancel": "Basso" },
+  "model": "mlx-community/parakeet-tdt-0.6b-v2",
+  "vad_model": "models/silero_vad_v4.onnx"
+}

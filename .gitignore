@@ -2,3 +2,4 @@ node_modules/
 *.log
 .DS_Store
 ears/config.json
+src/__pycache__/

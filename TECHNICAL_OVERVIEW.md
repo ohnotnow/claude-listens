@@ -32,7 +32,7 @@ ears/config.json     local knobs (gitignored; see config.example.json)
 bin/ears             control CLI for the daemon (status|toggle|arm|cancel)
 bin/handsfree        privacy flag file toggle — mic never arms without it
 bin/handy-reply      transcript → correct session (consumes one-shot target)
-probe/               throwaway discovery probes — kept as working references
+probe/               throwaway phase-0 probes — archaeology, not maintained
 RUNNING.md           day-to-day runbook, quirks, troubleshooting table
 ```
 
@@ -107,11 +107,13 @@ stream ends, the owning session has exited and you should clean up.
 
 ### The probes
 
-`probe/` is the discovery record, kept runnable: `ancestry-probe.ts` (what env
-and ancestry does Claude Code give an MCP server? does the TS SDK deliver
-channel events?), `channel-probe.py` (can the Python SDK do the same?), and
-`ears-latency.py` (is warm parakeet-mlx fast enough?). When a new Claude Code
-release breaks something, re-run these before debugging the real servers.
+`probe/` is the discovery record — throwaway scripts kept as archaeology, not
+maintained code: `ancestry-probe.ts` (what env and ancestry does Claude Code
+give an MCP server? does the TS SDK deliver channel events?),
+`channel-probe.py` (can the Python SDK do the same?), and `ears-latency.py`
+(is warm parakeet-mlx fast enough?). If a Claude Code release breaks the loop,
+they're the smallest reproductions of the wire contract to start from — but
+expect to dust them off, not just run them.
 
 ## The loop (data flow)
 

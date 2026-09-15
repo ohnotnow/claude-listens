@@ -1,10 +1,61 @@
 #!/usr/bin/env bash
 # Control CLI for the ears daemon (ears/earsd.py). Raycast-ready, like bin/handsfree.
+#   ears install    write a launchd agent for the daemon and start it (survives reboots)
+#   ears uninstall  stop the agent and remove it
 set -euo pipefail
 port="${EARS_PORT:-18790}"
 cmd="${1:-status}"
+
+label="com.claude-listens.ears"
+plist="$HOME/Library/LaunchAgents/$label.plist"
+project="$(cd "$(dirname "$0")/.." && pwd)"
+state="$HOME/.claude-voice"
+
 case "$cmd" in
   status) exec curl -sf "localhost:$port/status" ;;
+  install)
+    uv_bin="$(command -v uv)" || { echo "uv not found on PATH" >&2; exit 1; }
+    mkdir -p "$HOME/Library/LaunchAgents" "$state"
+    if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+      launchctl bootout "gui/$(id -u)/$label"
+      # bootout returns before the job is gone; bootstrapping too soon fails with EIO (5)
+      for _ in $(seq 1 40); do
+        launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || break
+        sleep 0.5
+      done
+    fi
+    cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$uv_bin</string>
+    <string>run</string>
+    <string>$project/ears/earsd.py</string>
+  </array>
+  <key>WorkingDirectory</key><string>$project</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>$(dirname "$uv_bin"):/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$state/ears-daemon.out</string>
+  <key>StandardErrorPath</key><string>$state/ears-daemon.out</string>
+</dict>
+</plist>
+EOF
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+    echo "installed $label ($plist); daemon log: $state/ears.log"
+    ;;
+  uninstall)
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+    rm -f "$plist"
+    echo "removed $label"
+    ;;
   arm)
     # Exit 0 only if this call actually got the mic (daemon says "armed") -
     # the hands-free hook relies on this to avoid claiming someone else's
@@ -15,7 +66,7 @@ case "$cmd" in
     ;;
   toggle | cancel) exec curl -sf -X POST "localhost:$port/$cmd" ;;
   *)
-    echo "usage: ears [status|toggle|arm|cancel]" >&2
+    echo "usage: ears [status|toggle|arm|cancel|install|uninstall]" >&2
     exit 2
     ;;
 esac

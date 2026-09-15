@@ -1,7 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp>=1.9"]
+# dependencies = ["mcp>=1.9,<2"]
 # ///
+# mcp 2.x (2026-07-28+) rebuilt ServerSession around a per-request dispatcher;
+# the manual session loop below is a 1.x shape, hence the upper bound.
 """Voice channel server: spawned per session by Claude Code (stdio MCP),
 serves POST /say on an ephemeral localhost port and injects the body into
 the owning session as a <channel source="voice"> event.
@@ -16,9 +18,11 @@ stdout belongs to the MCP stdio transport - log to file/stderr only.
 import asyncio
 import os
 import signal
+import subprocess
 import sys
 import time
 from functools import partial
+from pathlib import Path
 from typing import Literal
 
 import mcp.types as types
@@ -42,11 +46,59 @@ INSTRUCTIONS = (
     "(transcription may introduce small word errors). A user replying by "
     "voice is away from the keyboard: prefer plain-text questions over the "
     "AskUserQuestion tool while this channel is in use - dialogs block "
-    "until someone reaches a keyboard, and voice replies queue behind them."
+    "until someone reaches a keyboard, and voice replies queue behind them. "
+    "The `handsfree` tool turns the voice loop on or off: use it when the "
+    "user asks to go hands-free (or to stop), and report the ears daemon "
+    "state it returns so they know whether the mic will actually arm."
 )
 
 BASE = default_base_dir()
 LOG_FILE = BASE / "server.log"
+BIN = Path(__file__).resolve().parent.parent / "bin"
+
+HANDSFREE_TOOL = types.Tool(
+    name="handsfree",
+    description=(
+        "Turn the hands-free voice loop on or off, or report its state. "
+        "Wraps bin/handsfree (the flag file the mic-arming hook checks) and "
+        "reports the ears daemon status alongside, so 'on' with a dead daemon "
+        "is visible immediately."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["on", "off", "status"],
+                "description": "on: arm the loop; off: disarm; status: report only.",
+            }
+        },
+        "required": ["action"],
+    },
+)
+
+
+def _run_bin(name: str, *args: str) -> str:
+    """Run a bin/ script and return its combined output (never raises)."""
+    try:
+        proc = subprocess.run(
+            [str(BIN / name), *args], capture_output=True, text=True, timeout=5
+        )
+        out = (proc.stdout + proc.stderr).strip()
+        return out or f"{name} exited {proc.returncode} with no output"
+    except FileNotFoundError:
+        return f"{name}: not found at {BIN / name}"
+    except subprocess.TimeoutExpired:
+        return f"{name}: timed out"
+
+
+def handsfree(action: str) -> str:
+    flag = _run_bin("handsfree", action)
+    ears = _run_bin("ears", "status")
+    if not ears.startswith("{"):
+        ears = "not running (start it: see RUNNING.md)"
+    log(f"handsfree {action}: {flag} / ears {ears}")
+    return f"{flag}\nears daemon: {ears}"
 
 
 def log(line: str) -> None:
@@ -134,7 +186,19 @@ async def main() -> None:
     if swept:
         log(f"swept dead registry entries: {', '.join(swept)}")
 
-    opts = Server("voice", version="0.1.0", instructions=INSTRUCTIONS).create_initialization_options(
+    server = Server("voice", version="0.1.0", instructions=INSTRUCTIONS)
+
+    @server.list_tools()
+    async def list_tools() -> list[types.Tool]:
+        return [HANDSFREE_TOOL]
+
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+        if name != "handsfree":
+            raise ValueError(f"unknown tool: {name}")
+        return [types.TextContent(type="text", text=handsfree(arguments["action"]))]
+
+    opts = server.create_initialization_options(
         experimental_capabilities={"claude/channel": {}}
     )
 
@@ -175,10 +239,12 @@ async def main() -> None:
 
             try:
                 async with http:
-                    # Drain the incoming stream; when it ends, our claude
-                    # session's stdio transport has closed and we are done.
+                    # Dispatch each message to the Server's handlers (tools/list,
+                    # tools/call); when the stream ends, our claude session's
+                    # stdio transport has closed and we are done.
                     async for message in session.incoming_messages:
                         log(f"incoming: {type(message).__name__}")
+                        await server._handle_message(message, session, None)
             finally:
                 cleanup("stdio closed")
 

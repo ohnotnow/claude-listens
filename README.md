@@ -35,39 +35,39 @@ under `~/.claude-voice/`.
 
 ## Using it
 
-[RUNNING.md](RUNNING.md) is the day-to-day runbook (quirks, config knobs,
-troubleshooting). The short version:
+Once, after cloning:
 
-1. Start the ears daemon, detached, so it outlives your Claude sessions:
+```bash
+uv run setup.py
+```
 
-   ```bash
-   nohup bash -c 'cd /path/to/claude-listens && exec uv run ears/earsd.py' \
-     >> ~/.claude-voice/ears-daemon.out 2>&1 &
-   ```
+It lists your microphones and asks which to prefer (the first connected
+match wins each recording, so AirPods can beat the desk mic whenever they're
+paired), downloads the speech model, installs the ears daemon as a launchd
+agent so it starts at login and restarts if it dies, registers the channel
+server with Claude Code for all your projects, and points a sibling
+`claude-speaks` clone at the recorder. It asks before each of those and is
+safe to re-run. Click Allow when macOS asks whether `python3` may use the
+microphone.
 
-   Copy `ears/config.example.json` to `ears/config.json` and list your
-   preferred microphones. The first connected match wins each recording, so
-   your AirPods beat the desk mic whenever they're paired.
+Every day:
 
-2. Register the channel server in your project's `.mcp.json` and launch
-   with the research-preview flag (expect a consent warning every time):
-
-   ```json
-   {
-     "mcpServers": {
-       "voice": { "command": "uv", "args": ["run", "/path/to/claude-listens/src/server.py"] }
-     }
-   }
-   ```
+1. Launch with the research-preview flag (expect a consent warning every
+   time). Worth an alias:
 
    ```bash
-   claude --dangerously-load-development-channels server:voice
+   alias claudel="claude --dangerously-load-development-channels server:voice"
    ```
 
-   Worth an alias if you're doing this a lot:
-   `alias claudel="claude --dangerously-load-development-channels server:voice"`
+2. Tell Claude "go hands-free". The channel server exposes a `handsfree`
+   tool that flips the flag and reports whether the ears daemon is up. Ask
+   Claude something and answer out loud. "Stop hands-free" turns the mic
+   off again.
 
-3. `bin/handsfree on`, ask Claude something, and answer out loud.
+The pieces behind that (`bin/ears install|uninstall`, `bin/handsfree`,
+`ears/config.json`, the `claude mcp add --scope user` registration) are all
+usable by hand; [RUNNING.md](RUNNING.md) is the day-to-day runbook (quirks,
+config knobs, troubleshooting).
 
 ## Sharp edges
 

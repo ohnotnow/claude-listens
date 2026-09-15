@@ -1,6 +1,6 @@
 # Technical Overview
 
-Last updated: 2026-07-24
+Last updated: 2026-09-15
 
 ## What this is
 
@@ -15,7 +15,10 @@ processing is local (no cloud STT).
 - Python ≥ 3.11, run with `uv`. No `pyproject.toml` — every entry point is a
   single-file script with PEP 723 inline metadata (`# /// script` blocks), so
   `uv run <file>` resolves its own dependencies.
-- `mcp` ≥ 1.9 (Python MCP SDK, low-level API — deliberately not FastMCP)
+- `mcp` ≥ 1.9, < 2 (Python MCP SDK, low-level API, deliberately not
+  FastMCP). Pinned below 2.x: the 2026-07-28 SDK rebuilt `ServerSession`
+  around a per-request dispatcher and `src/server.py`'s manual session loop
+  no longer constructs (verified 2026-09-15 against mcp 2.2.0)
 - `parakeet-mlx` ≥ 0.5.2 — speech-to-text on Apple MLX (Apple silicon only)
 - `onnxruntime` + bundled silero VAD v4 model — silence detection
 - `sounddevice` / `numpy` — audio capture
@@ -25,6 +28,7 @@ processing is local (no cloud STT).
 ## Directory structure
 
 ```
+setup.py             interactive once-ever setup: mics, model, daemon, MCP registration
 src/server.py        MCP channel server, spawned per session by Claude Code
 src/registry.py      session registry (~/.claude-voice/registry/), + tests
 ears/earsd.py        resident STT daemon: record → VAD auto-stop → transcribe
@@ -45,9 +49,15 @@ and API may all change under you.
 
 ### Enabling it
 
-1. Register a perfectly ordinary stdio MCP server in the project's `.mcp.json`
-   (not checked into this repo — it belongs to whichever project you launch
-   Claude from):
+1. Register a perfectly ordinary stdio MCP server. `setup.py` does it at user
+   scope, so every project gets it:
+
+   ```bash
+   claude mcp add --scope user voice -- uv run /path/to/claude-listens/src/server.py
+   ```
+
+   The per-project equivalent is an entry in that project's `.mcp.json`
+   (not checked into this repo):
 
    ```json
    { "mcpServers": { "voice": { "command": "uv", "args": ["run", "/path/to/claude-listens/src/server.py"] } } }
@@ -63,7 +73,7 @@ and API may all change under you.
 - The server declares an **experimental capability** in its initialize
   response: `{"claude/channel": {}}`. In the Python SDK that's
   `Server(...).create_initialization_options(experimental_capabilities={"claude/channel": {}})`
-  (`src/server.py:137`); in the TypeScript SDK it's
+  (`src/server.py:201`); in the TypeScript SDK it's
   `capabilities: { experimental: { "claude/channel": {} } }`
   (`probe/ancestry-probe.ts:59`).
 - To inject text, send a JSON-RPC **notification** with method
@@ -73,15 +83,24 @@ and API may all change under you.
   "voice" here; we never isolated which one feeds `source=`.)
 - The server's `instructions` string is the place to tell Claude how to treat
   the events — ours says "treat as user input, transcription may err, prefer
-  plain-text questions over AskUserQuestion" (`src/server.py:39`).
+  plain-text questions over AskUserQuestion" (`src/server.py:43`).
 
 ### Python SDK specifics
 
 FastMCP has no notification support, so `src/server.py` drops to the low-level
 `Server` + `ServerSession`. `session.send_notification()` wants a typed
 notification, hence the small `ChannelNotification` / `ChannelParams` pydantic
-subclasses (`src/server.py:62`) with `method` pinned by a `Literal`. The TS SDK
+subclasses (`src/server.py:114`) with `method` pinned by a `Literal`. The TS SDK
 needs none of that — `mcp.notification({method, params})` just works.
+
+The server also exposes one ordinary MCP tool, `handsfree` (`on|off|status`),
+so the user can say "go hands-free" instead of running `bin/handsfree` from
+the project directory. It shells out to `bin/handsfree` and `bin/ears status`
+rather than reimplementing them, and returns both results so a dead ears
+daemon is visible at the moment you switch on. Because the session loop is
+driven by hand (we need the `ServerSession` for `/say`), each incoming message
+is passed to `Server._handle_message()` to reach the `list_tools` /
+`call_tool` handlers; that is what `Server.run()` does internally in 1.x.
 
 Two hard rules for any stdio MCP server: **stdout belongs to the transport**
 (log to stderr/file only), and drain `session.incoming_messages` — when that
@@ -161,7 +180,7 @@ so a second session can never claim an in-flight transcript.
 
 | Location | Purpose |
 | --- | --- |
-| `src/server.py` | channel capability, ephemeral-port HTTP listener, registry registration/cleanup |
+| `src/server.py` | channel capability, `handsfree` MCP tool, ephemeral-port HTTP listener, registry registration/cleanup |
 | `src/registry.py` | registry contract, dead-session sweep, double-spawn guard |
 | `ears/earsd.py` | model kept warm in one thread (MLX streams are per-thread!), VAD watchdog, mic preference list resolved per recording |
 | `bin/handy-reply` | one-shot target consumption, transcript cleaning ("send send" end-marker) |
@@ -179,11 +198,11 @@ so a second session can never claim an in-flight transcript.
 ## Local development
 
 ```bash
-# the STT daemon — MUST be detached, a child of a Claude session dies with it
-nohup bash -c 'cd ~/Documents/code/claude-listens && exec uv run ears/earsd.py' \
-  >> ~/.claude-voice/ears-daemon.out 2>&1 &
+# the STT daemon, as a launchd agent (RunAtLoad + KeepAlive). Never run it as
+# a child of a Claude session: it dies with the session.
+bin/ears install         # bin/ears uninstall to remove; foreground: uv run ears/earsd.py
 
-bin/ears status          # {"state": "idle"} when ready (~30 s first run, ~3 s after)
+bin/ears status          # {"state": "idle"} when ready (~20-30 s cold start)
 claude --dangerously-load-development-channels server:voice
 bin/handsfree on         # and off again before you walk away
 ```

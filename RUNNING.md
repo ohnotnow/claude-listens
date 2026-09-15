@@ -14,24 +14,25 @@ app and plays no part in the loop.
 
 ## The one thing to know first
 
-The ears daemon must be running, and it must be launched **detached** — a
-daemon started as a child of a Claude session dies with that session
-(learned twice):
+The ears daemon must be running. `bin/ears install` writes a launchd agent
+(`~/Library/LaunchAgents/com.claude-listens.ears.plist`, RunAtLoad +
+KeepAlive) and starts it, so it survives reboots and never depends on a
+Claude session. Never start it as a child of a Claude session by hand: a
+daemon started that way dies with the session (learned twice). If you must
+run it in the foreground for debugging, `bin/ears uninstall` first, or the
+two will fight over port 18790.
 
-```bash
-nohup bash -c 'cd ~/Documents/code/claude-listens && exec uv run ears/earsd.py' \
-  >> ~/.claude-voice/ears-daemon.out 2>&1 &
-```
-
-First-ever launch takes ~30 s (model load + MLX kernel warm-up); restarts
-take ~3 s. `bin/ears status` should say `{"state": "idle"}`. A launchd job
-is the eventual tidy version of this (unscheduled).
+Cold start takes ~20-30 s (model load + MLX kernel warm-up). `bin/ears
+status` should say `{"state": "idle"}`. launchd's own stdout/stderr capture
+goes to `~/.claude-voice/ears-daemon.out`; the daemon's log is `ears.log`.
 
 ## Daily operation
 
 1. **Ears daemon running** (`bin/ears status`).
-2. **Launch the session with the channel** from a project whose `.mcp.json`
-   has the `voice` server (`uv run .../src/server.py` — see README):
+2. **Launch the session with the channel.** `setup.py` registers the `voice`
+   server at user scope (`claude mcp add --scope user voice -- uv run
+   .../src/server.py`), so any project works; a per-project `.mcp.json`
+   entry does the same for one project:
 
    ```bash
    claude --dangerously-load-development-channels server:voice
@@ -40,7 +41,9 @@ is the eventual tidy version of this (unscheduled).
    Accept the research-preview warning (every launch) and the MCP consent
    (once per project). **Personal account only** — some org accounts have
    channels disabled; if the flag is rejected, that's why.
-3. **`handsfree on`** — or bind `bin/handsfree` in Raycast.
+3. **Say "go hands-free"** to Claude (the `handsfree` MCP tool flips the flag
+   and reports the ears daemon state), or run `handsfree on` / bind
+   `bin/handsfree` in Raycast.
 4. **Talk.** The loop: Claude replies → Marvin speaks → mic arms (Tink) →
    you speak → ~2.5 s of silence sends it (Pop) → repeat. Mid-thought pauses
    under 2.5 s are safe. An optional spoken "send send" at the end is
@@ -54,6 +57,13 @@ Panic buttons: `handsfree off` · `ears cancel` · `killall afplay` (Marvin).
 
 ## Quirks worth remembering
 
+- **First arm under launchd prompts for the microphone.** With no Terminal
+  in the ancestry, macOS attributes the mic request to the daemon's own
+  interpreter (`python3` in uv's cache) and asks once (seen 2026-09-15;
+  Allow, then a spoken test transcribed fine). The grant is
+  tied to that interpreter path, so a rebuilt uv environment may ask again.
+  A denied grant does not error: recordings come back silent and cancel
+  after 15 s. Fix in System Settings, Privacy & Security, Microphone.
 - **AskUserQuestion dialogs need a keyboard.** Your voice reply queues
   behind the open dialog and is delivered once it's answered.
 - **Resumed sessions have split identities** — the Stop hook sees the
@@ -99,6 +109,6 @@ hands-free declines to arm without it).
 1. **Phase 2 — claude-to-claude** (`handy-UkLWZ.3.x`): named sessions +
    `send_to` tool, then deterministic anti-loop caps. The registry's `name`
    field is reserved for it.
-2. Unscheduled niceties: launchd job for the ears daemon; TTL check on the
+2. Unscheduled niceties: TTL check on the
    one-shot reply target (`armed_at` is already recorded); input-side word
    replacements in `bin/handy-reply` ("Clod" → "Claude").
